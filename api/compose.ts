@@ -132,48 +132,40 @@ Schema：
 
     const data = await resp.json();// 取得模型原始文字
 // 取得模型原始文字（保持你的寫法）
+// 取得模型原始文字
 const rawText: string =
   data?.output_text ??
   data?.output?.[0]?.content?.[0]?.text ??
   "";
 
-// 仍然保留你的 extractJson / sanitize
+// 把外層可能多餘的東西先清理
 const cleaned = sanitize(extractJson(rawText));
 
-function tryParseJson<T = any>(s: string): [true, T] | [false, null] {
+function safeParse<T = any>(str: string): T | null {
   try {
-    return [true, JSON.parse(s) as T];
+    return JSON.parse(str);
   } catch {
-    return [false, null];
+    return null;
   }
 }
 
-// ① 第一次嘗試：直接 parse（若模型已回真正 JSON，這一步就成功）
-let [ok1, first] = tryParseJson<any>(cleaned);
+let parsed: any = safeParse(cleaned);
 
-// ② 如果第一次 parse 成功，而且「結果是字串」，代表模型回的是「字串化的 JSON」
-//    再 parse 第二次就會得到真正的物件
-if (ok1 && typeof first === "string") {
-  const [ok2, second] = tryParseJson<any>(first);
-  if (ok2) {
+// 如果第一次 parse 出來的是字串，代表模型輸出的是「字串化 JSON」
+// 這時候再 parse 一次，就會得到真正的物件
+if (typeof parsed === "string") {
+  const second = safeParse(parsed);
+  if (second) {
     parsed = second;
   } else {
-    // 第二次 parse 還是失敗 -> 視為不合規
-    return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
-  }
-} else if (ok1) {
-  // 第一次 parse 就得到物件，直接用
-  parsed = first;
-} else {
-  // ③ 還是不行，最後再嘗試去掉可能包住整串的引號（有些模型會外層再套一對引號）
-  const trimmed = cleaned.replace(/^\s*"(.*)"\s*$/s, "$1");
-  const [ok3, third] = tryParseJson<any>(trimmed);
-  if (ok3) {
-    parsed = third;
-  } else {
     return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
   }
 }
+
+if (!parsed) {
+  return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
+}
+
 
 
     const [ok, normalized, why] = validateAndNormalize(parsed, { topic, level, locale });
