@@ -130,19 +130,36 @@ Schema：
       return j({ ok: false, upstream: "openai", status: resp.status, detail: trimLong(detail) }, resp.status);
     }
 
-    const data = await resp.json();
-    const rawText: string =
-      data?.output_text ??
-      data?.output?.[0]?.content?.[0]?.text ??
-      "";
+    const data = await resp.json();// 取得模型原始文字
+const rawText: string =
+  data?.output_text ??
+  data?.output?.[0]?.content?.[0]?.text ??
+  "";
 
-    const cleaned = sanitize(extractJson(rawText));
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
-    }
+// 將像 \"、\\n 這種跳脫字元還原一次（若模型把 JSON 當成字串輸出）
+function unescapeOnce(s: string) {
+  return s
+    .replace(/\\\\/g, "\\") // \\ -> \
+    .replace(/\\"/g, '"')   // \" -> "
+    .replace(/\\n/g, "\n"); // \n -> 換行
+}
+
+let cleaned = sanitize(extractJson(rawText));
+let parsed: any;
+
+try {
+  // 先嘗試直接 parse（模型若已給真正 JSON，這步就會成功）
+  parsed = JSON.parse(cleaned);
+} catch {
+  // 若失敗，多半是整份 JSON 被包成字串，反轉義一次再嘗試
+  const deescaped = unescapeOnce(cleaned);
+  try {
+    parsed = JSON.parse(deescaped);
+  } catch {
+    return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
+  }
+}
+
 
     const [ok, normalized, why] = validateAndNormalize(parsed, { topic, level, locale });
     if (!ok) return j({ ok: false, error: "SCHEMA_VALIDATION_FAILED", reason: why, raw: rawText }, 422);
