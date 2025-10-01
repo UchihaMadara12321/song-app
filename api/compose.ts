@@ -1,6 +1,6 @@
 // api/compose.ts
 // Node.js Serverless Function 版：較不易因內容龐大而超時
-export const config = { runtime: "nodejs18.x" };
+export const config = { runtime: "nodejs" };
 
 type ComposeIn = {
   topic?: string;
