@@ -1,278 +1,158 @@
 // api/compose.ts
-// Node.js Serverless Function 版：較不易因內容龐大而超時
-export const config = { runtime: "nodejs" };
+// 目標：用 Structured Outputs 要求模型只輸出符合 SONG schema 的乾淨 JSON
+// 適用 Vercel Serverless Functions（Node 預設 runtime）
 
-type ComposeIn = {
-  topic?: string;
-  level?: "beginner" | "intermediate" | "advanced" | string;
-  locale?: string; // e.g. "zh-TW"
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+
+type ComposeBody = {
+  topic: string;            // 使用者要學的主題（例如：信賴區間是什麼？）
+  level?: "beginner" | "intermediate" | "advanced";
+  locale?: "zh-TW" | "zh-CN" | "en-US";
 };
 
-type ComposeOut = {
-  meta: { topic: string; level: string; locale: string; duration_min: number };
-  S: {
-    hook_story: string;
-    intuition: string;
-    visual: string;
-    table: string;
-    real_world_examples: string[];
-  };
-  O: {
-    learning_objectives: string[];
-    prerequisites: string[];
-    key_terms: string[];
-    outcomes_checklist: string[];
-  };
-  N: {
-    core_explanation: string;
-    formulas: string[];
-    step_by_step: string[];
-    worked_example: { problem: string; steps: string[]; answer: string };
-    misconceptions: Array<{ myth: string; fix: string }>;
-  };
-  G: {
-    practice_sets: Array<{
-      title: string;
-      items: Array<{
-        q: string;
-        expected: string;
-        hints: string[];
-        common_error: string;
-        correction: string;
-      }>;
-    }>;
-    summary: string;
-    spaced_retrieval: string[];
-    extension: string[];
-  };
-};
+function j(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
 
-// Vercel Node API：export default (req, res)
-export default async function handler(req: any, res: any) {
-  // 統一 JSON 回傳（UTF-8）
-  const j = (obj: unknown, status = 200) =>
-    res
-      .status(status)
-      .setHeader("Content-Type", "application/json; charset=utf-8")
-      .send(JSON.stringify(obj));
+// SONG 輸出結構（最小可行）
+const songSchema = {
+  name: "SONG_Plan",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      S: {
+        // Spark：用「可以直接拿去教」的條列說明（定義/方法/應用場景等）
+        type: "array",
+        items: { type: "string" },
+        minItems: 1,
+      },
+      O: {
+        // Objectives：學習目標（具體到可以檢核）
+        type: "array",
+        items: { type: "string" },
+        minItems: 1,
+      },
+      N: {
+        // Nucleus：核心概念（澄清常見誤解、正確觀念）
+        type: "array",
+        items: { type: "string" },
+        minItems: 1,
+      },
+      G: {
+        // Generation：引導練習（錯誤導向/步驟/總結）
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          exercise: { type: "string" }, // 一個具體練習題或任務敘述
+          steps: {
+            type: "array",
+            items: { type: "string" }, // 解題/練習步驟（條列）
+            minItems: 1,
+          },
+          summary: { type: "string" }, // 一段完整的總結/延伸
+        },
+        required: ["exercise", "steps", "summary"],
+      },
+    },
+    required: ["S", "O", "N", "G"],
+  },
+} as const;
 
-  if (req.method !== "POST") return j({ ok: false, error: "Method Not Allowed" }, 405);
+// 你可以把這段 prompt 視為「出題規範」：
+// - 限定語言（locale）
+// - 限定層級（level）
+// - 明確請模型依 SONG 結構填內容
+function buildPrompt(topic: string, level: string, locale: string) {
+  return `
+你是一位懂教學設計的家教，請用 ${locale} 回答並設計學習內容，主題是「${topic}」，學習程度：${level}。
+請嚴格依照 SONG 教學法輸出內容，並填入下列四個欄位（S / O / N / G）。
+- S（Spark）：用容易懂、可用於啟動動機與快速入門的 3~5 條 bullet，優先包含「定義 / 計算方法 / 應用場景」。
+- O（Objectives）：3~5 條可檢核的學習目標（用動作動詞，具體可觀察）。
+- N（Nucleus）：釐清此主題最常見的誤解與正確概念（3~5 條）。
+- G（Generation）：設計一個練習任務（exercise），並提供 3~6 個步驟（steps），最後給一段總結（summary）。
+
+輸出只允許為 JSON（由系統提供的 JSON Schema 已經約束），不要多餘文字、不要 Markdown、不要程式碼圍欄。
+`;
+}
+
+export default async function handler(req: Request) {
+  if (req.method !== "POST") {
+    return j({ ok: false, error: "Method Not Allowed" }, 405);
+  }
+
+  let payload: ComposeBody;
+  try {
+    payload = (await req.json()) as ComposeBody;
+  } catch {
+    return j({ ok: false, error: "INVALID_JSON_BODY" }, 400);
+  }
+
+  const topic = (payload.topic ?? "").trim();
+  const level = (payload.level ?? "beginner").trim();
+  const locale = (payload.locale ?? "zh-TW").trim();
+
+  if (!topic) {
+    return j({ ok: false, error: "MISSING_TOPIC" }, 400);
+  }
+
+  // 建立提示
+  const prompt = buildPrompt(topic, level, locale);
 
   try {
-    // 兼容 body 可能是已解析物件或字串
-    const bodyRaw = req.body ?? {};
-    const input: ComposeIn =
-      typeof bodyRaw === "string" ? JSON.parse(bodyRaw) : (bodyRaw as ComposeIn);
-
-    const topic = (input.topic || "統計學：信賴區間").trim();
-    const level = input.level || "beginner";
-    const locale = input.locale || "zh-TW";
-
-    const apiKey = process.env.OPENAI_API_KEY as string | undefined;
-    if (!apiKey) return j({ ok: false, error: "Missing OPENAI_API_KEY" }, 500);
-
-    // —— Prompt（完整教學流程）——
-    const prompt = `你是一位嚴謹且友善的教學助理。使用者提出明確的量化分析課題：「${topic}」。
-請依「SONG 教學法」產生完整教學流程，語言：${locale}，學習層級：${level}。
-最終目標：輕鬆學習、100 天後仍能記得。請務必：
-1) Spark：用故事/圖形/表格/生活案例建立直覺，避免空話與模板化。
-2) Objective：列出可衡量學習目標與自我檢核，補齊前置知識。
-3) Nucleus：核心講解需有精煉說明、LaTeX 公式（若需要）、步驟化推導、完整例題；列出常見誤解與正確澄清。
-4) Generation：以 error-based learning 設計練習（題目→常見錯誤→糾正），並給 2–3 句總結、spaced retrieval 提示、延伸應用。
-5) 圖形請以極短 ASCII 或 mermaid 片段呈現；表格請用簡短 Markdown。
-6) 僅輸出「純 JSON」，結構與鍵名必須嚴格符合以下 Schema；不得輸出註解、額外說明或 \`\`\`json 標記。
-
-Schema：
-{
-  "meta": { "topic": string, "level": string, "locale": string, "duration_min": number },
-  "S": {
-    "hook_story": string,
-    "intuition": string,
-    "visual": string,
-    "table": string,
-    "real_world_examples": string[]
-  },
-  "O": {
-    "learning_objectives": string[],
-    "prerequisites": string[],
-    "key_terms": string[],
-    "outcomes_checklist": string[]
-  },
-  "N": {
-    "core_explanation": string,
-    "formulas": string[],
-    "step_by_step": string[],
-    "worked_example": { "problem": string, "steps": string[], "answer": string },
-    "misconceptions": [ { "myth": string, "fix": string } ]
-  },
-  "G": {
-    "practice_sets": [
-      {
-        "title": string,
-        "items": [ { "q": string, "expected": string, "hints": string[], "common_error": string, "correction": string } ]
-      }
-    ],
-    "summary": string,
-    "spaced_retrieval": string[],
-    "extension": string[]
-  }
-}`;
-
-    // 用 Responses API（最穩定）
-    const resp = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "gpt-4o-mini", input: prompt })
+    // ★ 關鍵：用 Structured Outputs（json_schema）強制模型回「符合 schema 的 JSON」
+    const r = await client.responses.create({
+      model: "gpt-4o-mini",
+      input: prompt,
+      temperature: 0.7,
+      response_format: {
+        type: "json_schema",
+        json_schema: songSchema,
+      },
     });
 
-    if (!resp.ok) {
-      const detail = await resp.text().catch(() => "");
-      return j({ ok: false, upstream: "openai", status: resp.status, detail: trimLong(detail) }, resp.status);
+    // 依 SDK 版本取 JSON：新版會在 content[0].json；有些版本會在 output_text（即 JSON 字串）
+    let data: any =
+      (r as any)?.output?.[0]?.content?.[0]?.json ??
+      (r as any)?.output_text
+        ? JSON.parse((r as any).output_text)
+        : null;
+
+    if (!data) {
+      // 安全退路：把完整結果回給你排錯，不再回「MODEL_OUTPUT_NOT_JSON」
+      return j({ ok: false, error: "NO_JSON_PAYLOAD", raw: r }, 502);
     }
 
-    const data = await resp.json();// 取得模型原始文字
-// 取得模型原始文字（保持你的寫法）
-// 取得模型原始文字
-const rawText: string =
-  data?.output_text ??
-  data?.output?.[0]?.content?.[0]?.text ??
-  "";
+    // 最簡單的校驗：確保四個欄位存在
+    const ok =
+      data &&
+      Array.isArray(data.S) &&
+      Array.isArray(data.O) &&
+      Array.isArray(data.N) &&
+      data.G &&
+      typeof data.G.exercise === "string" &&
+      Array.isArray(data.G.steps) &&
+      typeof data.G.summary === "string";
 
-// 把外層可能多餘的東西先清理
-const cleaned = sanitize(extractJson(rawText));
-
-function safeParse<T = any>(str: string): T | null {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return null;
-  }
-}
-
-let parsed: any = safeParse(cleaned);
-
-// 如果第一次 parse 出來的是字串，代表模型輸出的是「字串化 JSON」
-// 這時候再 parse 一次，就會得到真正的物件
-if (typeof parsed === "string") {
-  const second = safeParse(parsed);
-  if (second) {
-    parsed = second;
-  } else {
-    return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
-  }
-}
-
-if (!parsed) {
-  return j({ ok: false, error: "MODEL_OUTPUT_NOT_JSON", raw: rawText }, 502);
-}
-
-
-
-    const [ok, normalized, why] = validateAndNormalize(parsed, { topic, level, locale });
-    if (!ok) return j({ ok: false, error: "SCHEMA_VALIDATION_FAILED", reason: why, raw: rawText }, 422);
-
-    return j(normalized, 200);
-  } catch (e: any) {
-    return res
-      .status(500)
-      .setHeader("Content-Type", "application/json; charset=utf-8")
-      .send(JSON.stringify({ ok: false, error: String(e?.message || e), stack: e?.stack ?? null }));
-  }
-}
-
-/* ---------- Helpers ---------- */
-function extractJson(s: string): string {
-  if (!s) return "";
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence?.[1]) return fence[1].trim();
-  let t = s.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-  const i1 = t.indexOf("{"), i2 = t.lastIndexOf("}");
-  if (i1 !== -1 && i2 !== -1 && i2 > i1) return t.slice(i1, i2 + 1).trim();
-  return t;
-}
-function sanitize(s: string) {
-  return s.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
-}
-function trimLong(s: string, max = 4000) {
-  return s.length > max ? s.slice(0, max) + "…(truncated)" : s;
-}
-
-function validateAndNormalize(x: any, meta: { topic: string; level: string; locale: string })
-  : [true, ComposeOut, null] | [false, null, string] {
-  if (!x || typeof x !== "object") return [false, null, "not an object"];
-
-  const out: ComposeOut = {
-    meta: {
-      topic: meta.topic,
-      level: meta.level,
-      locale: meta.locale,
-      duration_min: typeof x?.meta?.duration_min === "number" ? x.meta.duration_min : 25
-    },
-    S: {
-      hook_story: str(x?.S?.hook_story),
-      intuition: str(x?.S?.intuition),
-      visual: str(x?.S?.visual),
-      table: str(x?.S?.table),
-      real_world_examples: arrStr(x?.S?.real_world_examples)
-    },
-    O: {
-      learning_objectives: arrStr(x?.O?.learning_objectives),
-      prerequisites: arrStr(x?.O?.prerequisites),
-      key_terms: arrStr(x?.O?.key_terms),
-      outcomes_checklist: arrStr(x?.O?.outcomes_checklist)
-    },
-    N: {
-      core_explanation: str(x?.N?.core_explanation),
-      formulas: arrStr(x?.N?.formulas),
-      step_by_step: arrStr(x?.N?.step_by_step),
-      worked_example: {
-        problem: str(x?.N?.worked_example?.problem),
-        steps: arrStr(x?.N?.worked_example?.steps),
-        answer: str(x?.N?.worked_example?.answer)
-      },
-      misconceptions: (Array.isArray(x?.N?.misconceptions) ? x.N.misconceptions : [])
-        .filter((m: any) => isNonEmptyString(m?.myth) && isNonEmptyString(m?.fix))
-        .map((m: any) => ({ myth: m.myth.trim(), fix: m.fix.trim() }))
-    },
-    G: {
-      practice_sets: (Array.isArray(x?.G?.practice_sets) ? x.G.practice_sets : [])
-        .map((ps: any) => ({
-          title: str(ps?.title),
-          items: (Array.isArray(ps?.items) ? ps.items : [])
-            .map((it: any) => ({
-              q: str(it?.q),
-              expected: str(it?.expected),
-              hints: arrStr(it?.hints),
-              common_error: str(it?.common_error),
-              correction: str(it?.correction)
-            }))
-            .filter((it: any) => it.q && it.expected)
-        }))
-        .filter((ps: any) => ps.title && ps.items?.length),
-      summary: str(x?.G?.summary),
-      spaced_retrieval: arrStr(x?.G?.spaced_retrieval),
-      extension: arrStr(x?.G?.extension)
+    if (!ok) {
+      return j({ ok: false, error: "JSON_SHAPE_INVALID", raw: data }, 422);
     }
-  };
 
-  // 必要性檢查（避免只換名詞）
-  if (!out.S.hook_story || !out.S.intuition) return [false, null, "S.hook_story / S.intuition missing"];
-  if (out.S.real_world_examples.length < 2) return [false, null, "S.real_world_examples too short"];
-  if (!out.N.core_explanation || out.N.step_by_step.length < 2) return [false, null, "N.core_explanation / step_by_step too short"];
-  if (!out.N.worked_example.problem || out.N.worked_example.steps.length < 2) return [false, null, "N.worked_example incomplete"];
-  if (!out.N.misconceptions.length) return [false, null, "N.misconceptions missing"];
-  if (!out.G.practice_sets.length || !out.G.practice_sets[0].items.length) return [false, null, "G.practice_sets missing"];
-  if (!out.G.summary || !out.G.spaced_retrieval.length) return [false, null, "G.summary / spaced_retrieval missing"];
-
-  return [true, out, null];
-}
-
-function str(v: any): string {
-  return typeof v === "string" ? v.trim() : "";
-}
-function arrStr(v: any): string[] {
-  return Array.isArray(v) ? v.filter(isNonEmptyString).map((s: string) => s.trim()) : [];
-}
-function isNonEmptyString(v: any): v is string {
-  return typeof v === "string" && v.trim().length > 0;
+    // 成功
+    return j({ ok: true, data });
+  } catch (err: any) {
+    // OpenAI / 其他例外
+    return j({
+      ok: false,
+      error: "OPENAI_ERROR",
+      message: err?.message ?? String(err),
+    }, 500);
+  }
 }
