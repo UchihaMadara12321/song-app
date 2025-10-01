@@ -24,7 +24,7 @@ SONG: ${JSON.stringify(songPlan).slice(0, 6000)}
 `.trim();
 
     const body = {
-      model: "o4-mini",
+      model: "gpt-4o-mini",
       input: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" }
     };
