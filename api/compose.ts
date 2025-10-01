@@ -24,21 +24,23 @@ export default async function handler(req: Request): Promise<Response> {
     ].filter(Boolean).join("\n");
 
     const body = {
-      model: "gpt-4o-mini", // 可改成你的 Responses 相容模型
-      input: [
-        { role: "system", content: system },
-        { role: "user",   content: user }
-      ],
-      response_format: { type: "json_schema", json_schema: SONG_SCHEMA }
-    };
+  model: "gpt-4o-mini",
+  input: [{
+    role: "user",
+    content: `用 SONG 教學法教主題：「${payload.topic}」。請輸出 JSON，欄位必須有 S,O,N,G。`
+  }]
+};
 
     const data = await callOpenAIResponses(body);
     const json = pluckJson(data);
     return jsonResponse(json);
-  } catch (e: any) {
-     return jsonResponse({
+  }catch (e: any) {
+  return new Response(JSON.stringify({
     error: String(e?.message || e),
     stack: e?.stack || null
-  }, 500);
-  }
+  }), {
+    status: 500,
+    headers: { "Content-Type": "application/json" }
+  });
+}
 }
