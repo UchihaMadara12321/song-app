@@ -24,7 +24,7 @@ export default async function handler(req: Request): Promise<Response> {
     ].filter(Boolean).join("\n");
 
     const body = {
-      model: "o4-mini", // 可改成你的 Responses 相容模型
+      model: "gpt-4o-mini", // 可改成你的 Responses 相容模型
       input: [
         { role: "system", content: system },
         { role: "user",   content: user }
@@ -36,6 +36,9 @@ export default async function handler(req: Request): Promise<Response> {
     const json = pluckJson(data);
     return jsonResponse(json);
   } catch (e: any) {
-    return jsonResponse({ error: e.message }, 500);
+     return jsonResponse({
+    error: String(e?.message || e),
+    stack: e?.stack || null
+  }, 500);
   }
 }
