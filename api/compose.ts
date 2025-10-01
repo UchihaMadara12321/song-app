@@ -28,28 +28,13 @@ export default async function handler(req: Request) {
 
     // 這版先不強制 schema，讓成功率最高；之後再逐步加上 Structured Outputs
     const body = {
-      model: "gpt-4o-mini",
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                `你是一位嚴謹且友善的教學助理。` +
-                `請用「SONG 教學法」為主題「${topic}」生成結構化學習引導，` +
-                `受眾程度：${level}，語言：${locale}。` +
-                `請直接輸出 **JSON**，四個欄位：` +
-                `S（Structure/主題結構，列出2–4個核心小節）、` +
-                `O（Objectives/學習目標，2–3條）、` +
-                `N（Negatives/常見誤解與澄清，2–3條）、` +
-                `G（Guided Practice/練習與總結，提供1–2個簡短練習與1段總結）。` +
-                `只輸出 JSON，不要任何多餘文字。`
-            }
-          ]
-        }
-      ]
-    };
+  model: "gpt-4o-mini",
+  input:
+    `你是一位嚴謹且友善的教學助理。` +
+    `請用「SONG 教學法」為主題「${topic}」生成結構化學習引導，` +
+    `受眾程度：${level}，語言：${locale}。` +
+    `請直接輸出 JSON，欄位為 S,O,N,G（各自為陣列或短段落）。只輸出 JSON。`
+};
 
     const res = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
