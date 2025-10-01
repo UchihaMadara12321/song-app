@@ -72,7 +72,7 @@ export default async function handler(req: Request) {
 function j(obj: unknown, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json" }
+    headers: { "Content-Type": "application/json; charset=utf-8" } // ← 加上 charset
   });
 }
 
