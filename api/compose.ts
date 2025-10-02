@@ -3,6 +3,7 @@ export const config = {
   runtime: "nodejs",
   maxDuration: 60,
   memory: 1024,
+  regions: ["hkg1"], 
 };
 
 import OpenAI from "openai";
