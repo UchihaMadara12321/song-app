@@ -1,5 +1,9 @@
 // api/compose.ts  —— 加完整錯誤輸出
-export const config = { runtime: "nodejs", maxDuration: 10 };
+// 放在檔案最上面
+export const config = {
+  runtime: 'nodejs18.x',   // 明確指定 Node 18
+  maxDuration: 60          // （可選）增加雲端函式超時上限
+};
 
 import OpenAI from "openai";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
