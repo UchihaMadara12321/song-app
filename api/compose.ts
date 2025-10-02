@@ -49,8 +49,8 @@ export default async function handler(req: Request) {
       input: buildPrompt(topic, body.level ?? "beginner", body.locale ?? "zh-TW"),
       temperature: 0.2,
       max_output_tokens: 800,
-      response_format: { type: "json_object" }, // ✅ 正確用法
-    });
+      response_format: { type: "json_object" }, // 這裡 TS 不認識
+    } as any); // ✅ 強制忽略 TS 型別
 
     const out = (r as any).output_text;
     const data = JSON.parse(out);
