@@ -1,5 +1,5 @@
 // api/ping.ts
-export const config = { runtime: 'nodejs18.x' };
+export const config = { runtime: 'nodejs' };
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 

@@ -1,7 +1,7 @@
 // api/compose.ts  —— 加完整錯誤輸出
 // 放在檔案最上面
 export const config = {
-  runtime: 'nodejs18.x',   // 明確指定 Node 18
+  runtime: 'nodejs',   // 明確指定 Node 18
   maxDuration: 60          // （可選）增加雲端函式超時上限
 };
 
