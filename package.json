@@ -6,6 +6,7 @@
   "scripts": {},
   "devDependencies": {
     "@types/node": "^24.6.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "openai": "^4.55.0"
   }
 }
