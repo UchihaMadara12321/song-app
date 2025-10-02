@@ -1,10 +1,8 @@
-// api/compose.ts  —— 加完整錯誤輸出
-// 放在檔案最上面
+// api/compose.ts
 export const config = {
-  runtime: 'nodejs',   // 明確指定 Node 18
+  runtime: "nodejs",
   maxDuration: 60,
   memory: 1024,
-  regions: ["hkg1", "sin1"],           // （可選）增加雲端函式超時上限
 };
 
 import OpenAI from "openai";
@@ -23,35 +21,15 @@ function json(data: unknown, status = 200) {
   });
 }
 
-const songSchema = {
-  name: "SONG_Plan",
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      S: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 2 },
-      O: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 2 },
-      N: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 2 },
-      G: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          exercise: { type: "string" },
-          steps: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 3 },
-          summary: { type: "string" },
-        },
-        required: ["exercise", "steps", "summary"],
-      },
-    },
-    required: ["S", "O", "N", "G"],
-  },
-} as const;
-
 function buildPrompt(topic: string, level: string, locale: string) {
   return `
-你是一位懂教學設計的家教，使用 ${locale} 回答，主題：「${topic}」，程度：${level}。
-請嚴格依 SONG 輸出，並保持精簡：S/O/N 各 2 條，G 只 1 題 + 2~3 步 + 1 段總結。
-只輸出 JSON（系統已提供 Schema），不要任何多餘文字。
+你是一位懂教學設計的家教，請用 ${locale} 回答，主題：「${topic}」，程度：${level}。
+請嚴格依 SONG 教學法輸出內容，並以 JSON 格式回傳：
+- S（Spark）：定義 / 計算方法 / 應用場景
+- O（Objectives）：3~5 條學習目標
+- N（Nucleus）：澄清常見誤解
+- G（Generation）：練習題、解題步驟、總結
+只允許輸出 JSON，不要有多餘文字。
 `.trim();
 }
 
@@ -60,46 +38,26 @@ export default async function handler(req: Request) {
 
   let body: ComposeBody;
   try { body = (await req.json()) as ComposeBody; }
-  catch (e) {
-    console.error("Invalid JSON body:", e);
-    return json({ ok: false, error: "INVALID_JSON_BODY" }, 400);
-  }
+  catch { return json({ ok: false, error: "INVALID_JSON_BODY" }, 400); }
 
   const topic = body.topic?.trim();
-  const level = body.level ?? "beginner";
-  const locale = body.locale ?? "zh-TW";
   if (!topic) return json({ ok: false, error: "MISSING_TOPIC" }, 400);
 
-  const prompt = buildPrompt(topic, level, locale);
-
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is missing in Production env");
-    }
-
     const r = await client.responses.create({
       model: "gpt-4o-mini",
-      input: prompt,
-      temperature: 0.1,
-      max_output_tokens: 280,
-      response_format: { type: "json_schema", json_schema: songSchema },
+      input: buildPrompt(topic, body.level ?? "beginner", body.locale ?? "zh-TW"),
+      temperature: 0.2,
+      max_output_tokens: 800,
+      response_format: { type: "json_object" }, // ✅ 正確用法
     });
 
-    const data =
-      (r as any)?.output?.[0]?.content?.[0]?.json ??
-      ((r as any)?.output_text ? JSON.parse((r as any).output_text) : null);
+    const out = (r as any).output_text;
+    const data = JSON.parse(out);
 
-    if (!data) {
-      console.error("No JSON in response:", JSON.stringify(r, null, 2));
-      return json({ ok: false, error: "NO_JSON" }, 502);
-    }
     return json({ ok: true, data });
   } catch (err: any) {
     console.error("Compose error:", err);
-    return json({
-      ok: false,
-      error: err?.message ?? String(err),
-      stack: err?.stack ?? null,
-    }, 500);
+    return json({ ok: false, error: err?.message ?? String(err) }, 500);
   }
 }
