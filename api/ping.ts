@@ -1,8 +1,6 @@
 // api/ping.ts
-export const config = { runtime: "nodejs", maxDuration: 10 };
+import { VercelRequest, VercelResponse } from '@vercel/node';
 
-export default async function handler(req: Request) {
-  return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
+export default function handler(req: VercelRequest, res: VercelResponse) {
+  res.status(200).json({ ok: true, ts: Date.now() });
 }
