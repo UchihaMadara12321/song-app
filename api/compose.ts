@@ -2,7 +2,9 @@
 // 放在檔案最上面
 export const config = {
   runtime: 'nodejs',   // 明確指定 Node 18
-  maxDuration: 60          // （可選）增加雲端函式超時上限
+  maxDuration: 60,
+  memory: 1024,
+  regions: ["hkg1", "sin1"],           // （可選）增加雲端函式超時上限
 };
 
 import OpenAI from "openai";

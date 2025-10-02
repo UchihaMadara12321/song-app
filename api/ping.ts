@@ -1,5 +1,9 @@
 // api/ping.ts
-export const config = { runtime: 'nodejs' };
+export const config = { 
+  runtime: 'nodejs' ,
+  memory: 1024,
+  regions: ["hkg1", "sin1"], 
+};
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
